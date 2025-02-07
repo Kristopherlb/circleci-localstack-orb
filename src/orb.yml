@@ -1,84 +1,61 @@
+# Use the latest 2.1 version of CircleCI pipeline process engine.
+# See: https://circleci.com/docs/configuration-reference
 version: 2.1
 
-description: "Reusable LocalStack integration for CircleCI"
-display:
-  home_url: "https://github.com/your-repo/circleci-localstack-orb"
-  source_url: "https://github.com/your-repo/circleci-localstack-orb"
-
 orbs:
-  shellcheck: circleci/shellcheck@3.0
+  localstack: localstack/platform@2.2.0 # Using the LocalStack orb
 
-commands:
-  setup:
-    description: "Starts LocalStack with specified AWS services"
-    parameters:
-      services:
-        type: string
-        default: "s3,dynamodb,sqs"
-        description: "Comma-separated list of AWS services to start"
-      region:
-        type: string
-        default: "us-east-1"
-        description: "AWS region for testing"
-
-    steps:
-      - run:
-          name: "Start LocalStack"
-          command: |
-            docker run -d --rm --name localstack \
-              -e SERVICES=<< parameters.services >> \
-              -e DEFAULT_REGION=<< parameters.region >> \
-              -p 4566:4566 \
-              localstack/localstack
-
-  teardown:
-    description: "Stops and cleans up LocalStack"
-    steps:
-      - run:
-          name: "Stop LocalStack"
-          command: docker stop localstack || true
-
+# Define a job to run tests
+# See: https://circleci.com/docs/configuration-reference/#jobs
 jobs:
-  run-tests:
-    description: "Runs tests against LocalStack"
-    parameters:
-      test_command:
-        type: string
-        default: "pytest tests/"
-        description: "Command to run tests"
+  setup-cloud-pod:
+    executor: localstack/default
     steps:
-      - setup
+      - localstack/startup # Start LocalStack
       - run:
-          name: "Run Tests"
-          command: << parameters.test_command >>
-      - teardown
+          name: Create Resources
+          command: |
+            awslocal s3 mb s3://test-bucket
+            awslocal sqs create-queue --queue-name=test-queue
+      - localstack/cloud_pods:
+          pod_action: save
+          pod_name: my_test_pod # Save the state to a Cloud Pod
 
-executors:
-  default:
-    description: "Docker executor with AWS CLI and LocalStack"
-    docker:
-      - image: cimg/python:3.9
-        environment:
-          AWS_ACCESS_KEY_ID: test
-          AWS_SECRET_ACCESS_KEY: test
-          AWS_DEFAULT_REGION: us-east-1
-          LOCALSTACK_HOST: http://localhost:4566
+  run-integration-tests:
+    executor: localstack/default
+    steps:
+      - localstack/cloud_pods:
+          pod_action: load
+          pod_name: my_test_pod # Load the state from the Cloud Pod
+      - run:
+          name: Run Integration Tests
+          command: |
+            echo "Running integration tests against LocalStack..."
+            # Example: pytest tests/ --junitxml=test-results.xml # Uncomment and modify as needed
+      - store_test_results:
+          path: test-results # Specify the directory where test results are stored
 
-parameters:
-  context_name:
-    type: string
-    default: "default-context"  # Optional default value
+  run-dynamic-tests:
+    executor: localstack/default
+    steps:
+      - localstack/ephemeral: # Start an ephemeral LocalStack instance
+          auto_load_pod: circleci_test_pod
+      - run:
+          name: Create Resources for Dynamic Tests
+          command: |
+            echo "Running checks on my preloaded state..."
+            awslocal sqs get-queue-url --queue-name=test-queue
+            awslocal s3 ls s3://test
+            # Run dynamic tests here
 
+# Orchestrate jobs using workflows
+# See: https://circleci.com/docs/workflows/ & https://circleci.com/docs/configuration-reference/#workflows
 workflows:
-  version: 2
+  
   test:
     jobs:
-      - run-tests:
-          context: << pipeline.parameters.context_name >>  # Use the parameter for context
-          filters:
-            branches:
-              ignore:
-                - main
-            pull_requests:
-              only:
-                - test
+      - setup-cloud-pod
+      - run-integration-tests:
+          requires:
+            - setup-cloud-pod
+      - run-dynamic-tests

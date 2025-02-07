@@ -23,4 +23,5 @@ workflows:
           filters:
             branches:
               only:
-                - main # Run on commits to the main branch
+                - main
+                - test # Run on commits to the main branch
