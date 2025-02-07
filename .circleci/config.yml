@@ -2,26 +2,80 @@
 # See: https://circleci.com/docs/configuration-reference
 version: 2.1
 
+orbs:
+  localstack: localstack/platform@2.2.0 # Using the LocalStack orb
+
 # Define a job to run tests
 # See: https://circleci.com/docs/configuration-reference/#jobs
 jobs:
-  run-tests:
-    docker:
-      - image: cimg/base:current
+  setup-cloud-pod:
+    executor: localstack/default
     steps:
-      - checkout
+      - localstack/startup # Start LocalStack
       - run:
-          name: "Run Tests"
-          command: "echo 'Tests are running...'" # Simple command to print a message
+          name: Create Resources
+          command: |
+            awslocal s3 mb s3://test-bucket
+            awslocal sqs create-queue --queue-name=test-queue
+      - localstack/cloud_pods:
+          pod_action: save
+          pod_name: my_test_pod # Save the state to a Cloud Pod
+
+  run-integration-tests:
+    executor: localstack/default
+    steps:
+      - localstack/cloud_pods:
+          pod_action: load
+          pod_name: my_test_pod # Load the state from the Cloud Pod
+      - run:
+          name: Run Integration Tests
+          command: |
+            echo "Running integration tests against LocalStack..."
+            # Example: pytest tests/ --junitxml=test-results.xml # Uncomment and modify as needed
+      - store_test_results:
+          path: test-results # Specify the directory where test results are stored
+
+  run-dynamic-tests:
+    executor: localstack/default
+    steps:
+      - localstack/ephemeral: # Start an ephemeral LocalStack instance
+          auto_load_pod: circleci_test_pod
+      - run:
+          name: Create Resources for Dynamic Tests
+          command: |
+            echo "Running checks on my preloaded state..."
+            awslocal sqs get-queue-url --queue-name=test-queue
+            awslocal s3 ls s3://test
+            # Run dynamic tests here
+
+  teardown-localstack:
+    executor: localstack/default
+    steps:
+      - run:
+          name: Teardown LocalStack Resources
+          command: |
+            echo "Tearing down LocalStack resources..."
+            awslocal s3 rb s3://test-bucket --force # Remove the S3 bucket
+            awslocal sqs delete-queue --queue-url=$(awslocal sqs get-queue-url --queue-name=test-queue | jq -r .QueueUrl) # Delete the SQS queue
 
 # Orchestrate jobs using workflows
 # See: https://circleci.com/docs/workflows/ & https://circleci.com/docs/configuration-reference/#workflows
 workflows:
-  say-hello-workflow: # This is the name of the workflow, feel free to change it to better match your workflow.
+  
+  test:
     jobs:
-      - run-tests: # Only the test job remains in the workflow
-          filters:
-            branches:
-              only:
-                - main
-                - test # Run on commits to the main branch
+      - setup-cloud-pod
+      - run-integration-tests:
+          requires:
+            - setup-cloud-pod
+      - run-dynamic-tests:
+          requires:
+            - run-integration-tests
+      - teardown-localstack:
+          requires:
+            - run-dynamic-tests
+    filters:
+      branches:
+        only:
+          - main
+          - test # Specify the branch to trigger the workflow
