@@ -64,18 +64,32 @@ workflows:
   
   test:
     jobs:
-      - setup-cloud-pod
+      - setup-cloud-pod:
+          filters:
+            branches:
+              only:
+                - main 
+                - test # Specify the branch to trigger the workflow
       - run-integration-tests:
           requires:
             - setup-cloud-pod
+          filters:
+            branches:
+              only:
+                - main
+                - test
       - run-dynamic-tests:
           requires:
             - run-integration-tests
+          filters:
+            branches:
+              only:
+                - main
+                - test
       - teardown-localstack:
           requires:
             - run-dynamic-tests
-    filters:
-      branches:
-        only:
-          - main
-          - test # Specify the branch to trigger the workflow
+          filters:
+            branches:
+              only:
+                - main
