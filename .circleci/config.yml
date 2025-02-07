@@ -17,16 +17,10 @@ jobs:
           command: |
             awslocal s3 mb s3://test-bucket
             awslocal sqs create-queue --queue-name=test-queue
-      - localstack/cloud_pods:
-          pod_action: save
-          pod_name: my_test_pod # Save the state to a Cloud Pod
 
   run-integration-tests:
     executor: localstack/default
     steps:
-      - localstack/cloud_pods:
-          pod_action: load
-          pod_name: my_test_pod # Load the state from the Cloud Pod
       - run:
           name: Run Integration Tests
           command: |
@@ -68,8 +62,7 @@ workflows:
           filters:
             branches:
               only:
-                - main 
-                - test # Specify the branch to trigger the workflow
+                - main # Specify the branch to trigger the workflow
       - run-integration-tests:
           requires:
             - setup-cloud-pod
@@ -77,7 +70,6 @@ workflows:
             branches:
               only:
                 - main
-                - test
       - run-dynamic-tests:
           requires:
             - run-integration-tests
@@ -85,7 +77,6 @@ workflows:
             branches:
               only:
                 - main
-                - test
       - teardown-localstack:
           requires:
             - run-dynamic-tests
